@@ -1,0 +1,81 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+// shortcut: hard-coded sqlite path (relative to this dir); make env-driven if deploying elsewhere.
+datasource db {
+  provider = "sqlite"
+  url      = "file:./data/bot.db"
+}
+
+model Candle {
+  symbol    String
+  timeframe String
+  time      BigInt
+  open      Float
+  high      Float
+  low       Float
+  close     Float
+  volume    Float
+
+  @@id([symbol, timeframe, time])
+}
+
+model Signal {
+  id     Int      @id @default(autoincrement())
+  at     DateTime @default(now())
+  symbol String
+  action String
+  reason String
+  data   String
+}
+
+model Order {
+  id            Int      @id @default(autoincrement())
+  at            DateTime @default(now())
+  clientOrderId String   @unique
+  symbol        String
+  side          String
+  qty           Float
+  price         Float
+  fee           Float
+}
+
+model Trade {
+  id     Int      @id @default(autoincrement())
+  at     DateTime @default(now())
+  symbol String
+  entry  Float
+  exit   Float
+  qty    Float
+  pnl    Float
+  reason String
+}
+
+model EquitySnapshot {
+  id     Int      @id @default(autoincrement())
+  at     DateTime @default(now())
+  equity Float
+}
+
+model Log {
+  id      Int      @id @default(autoincrement())
+  at      DateTime @default(now())
+  level   String
+  kind    String
+  message String
+  data    String
+}
+
+/// Engine state (risk counters, open position, realized P&L) so a restart resumes where it stopped.
+model State {
+  key   String   @id
+  value String
+  at    DateTime @default(now())
+}
+
+/// Written BEFORE an order is sent: a leftover row after a crash means "this order may have gone out".
+model OrderIntent {
+  clientOrderId String   @id
+  at            DateTime @default(now())
+}

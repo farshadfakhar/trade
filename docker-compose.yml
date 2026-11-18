@@ -1,0 +1,21 @@
+services:
+  bot:
+    build: .
+    env_file: .env
+    environment: { TRUST_PROXY: "true" }  # behind Caddy / your own proxy only; remove if you expose :3000 directly
+    ports: ["127.0.0.1:3000:3000"]   # local only; use the https profile (Caddy) for remote access
+    volumes: ["botdata:/app/server/prisma/data"]
+    restart: unless-stopped
+
+  caddy:                              # docker compose --profile https up -d   (needs DOMAIN in .env, ports 80/443 open)
+    image: caddy:2
+    profiles: ["https"]
+    environment: { DOMAIN: "${DOMAIN:-}" }
+    ports: ["80:80", "443:443"]
+    volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro", "caddy_data:/data"]
+    depends_on: [bot]
+    restart: unless-stopped
+
+volumes:
+  botdata:
+  caddy_data:
