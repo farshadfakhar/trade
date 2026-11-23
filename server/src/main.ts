@@ -10,6 +10,7 @@ import { NobitexAdapter } from './exchange/NobitexAdapter.js';
 import { PaperAdapter } from './exchange/PaperAdapter.js';
 import type { ExchangeAdapter } from './exchange/types.js';
 import { closedOnly } from './data/candles.js';
+import { newPaperShortState, PaperShorts, shortPairs, type ShortPair } from './execution/PaperShorts.js';
 import { Bot } from './execution/Bot.js';
 import { Executor, type Sink } from './execution/Executor.js';
 import { RiskManager } from './risk/RiskManager.js';
@@ -117,7 +118,25 @@ const explainFor = (closed: Awaited<ReturnType<typeof fetchRecent>>, htfClosed: 
   cfg.STRATEGY === 'emaRsi' ? explainEmaRsi(closed, params, position)
   : cfg.STRATEGY === 'donchian' ? explainDonchian(closed, params, position)
   : cfg.STRATEGY === 'pullback15m' ? explainPullback15m(closed, htfClosed, params, position, executor.lastLossAt)
-  : { ready: false, summary: `A plain-language explanation is not available yet for the "${cfg.STRATEGY}" strategy. The risk checks below still apply.` };
+  : explainLongPullback(closed, position);
+
+function explainLongPullback(closed: Awaited<ReturnType<typeof fetchRecent>>, position: typeof executor.position) {
+  const signal = executor.o.strategy.onCandle(closed, position);
+  if (signal.reason === 'warming up') return { ready: false, summary: 'Waiting for enough completed price periods to check for a dip.' };
+  if (position) return { ready: true, mode: 'in_position', summary: 'A long is open. The bot watches its stop, profit target, and whether buying pressure has recovered.',
+    exit: [
+      { label: 'Price falls to the loss limit', ok: false, detail: `Stop near ${position.stop.toFixed(2)}` },
+      { label: 'Price reaches the profit target', ok: false, detail: `Target near ${position.target.toFixed(2)}` },
+      { label: 'Buying pressure has recovered', ok: signal.action === 'sell', detail: `The RSI momentum reading needs to rise above ${params.rsiExit}.` },
+    ] };
+  const dip = signal.reason !== 'not oversold';
+  return { ready: true, mode: 'flat', summary: signal.action === 'buy' ? 'A dip in an uptrend was detected on the latest close. The entry must also pass the safety checks.' : 'Waiting for a dip inside an uptrend.',
+    entry: [
+      { label: 'Price has dipped enough', ok: dip, detail: `The RSI momentum reading needs to be below ${params.rsiBuy}.` },
+      ...(dip ? [{ label: 'The broader trend is still up', ok: signal.action === 'buy', detail: `The close needs to be above its ${params.trend}-period average.` }] : []),
+    ],
+    plan: signal.action === 'buy' && signal.stop !== undefined && signal.target !== undefined ? { entry: closed.at(-1)!.close, stop: signal.stop, target: signal.target } : null };
+}
 
 const strategyView = async () => {
   const now = Date.now();
@@ -127,8 +146,11 @@ const strategyView = async () => {
   const htfClosed = HTF ? closedOnly(await candlesCached(symbol, HTF), HTF, now) : [];
   const e = explainFor(closed, htfClosed, executor.position);
   const gate = (label: string, ok: boolean, detail: string) => ({ label, ok, detail });
+  const scannerBlock = entryBlock?.();
   const gates = [
     gate('Bot is running', st.running, st.running ? 'Checking the market every 30 seconds' : 'Stopped: press Start'),
+    ...(cfg.AUTO_SCAN ? [gate('Scanner approved the active market', !scannerBlock, scannerBlock ?? 'The active market passed the scan.')] : []),
+    ...(st.mode === 'live' ? [gate('Live trading confirmed', st.liveConfirmed, st.liveConfirmed ? 'Live trading is confirmed.' : 'Confirm live trading in Settings.')] : []),
     gate('Kill switch (max drawdown)', !st.risk.killed, st.risk.killed ? 'ACTIVE: reset it manually' : `Peak ${st.risk.peak.toFixed(2)}, limit ${st.limits.maxDrawdownPct}%`),
     gate('Daily loss limit', !st.risk.dailyHalted, `Today ${st.risk.dailyPnl.toFixed(2)} USDT, halts at -${st.limits.dailyLossPct}%`),
     gate('Trades today', st.risk.tradesToday < st.limits.maxTrades, `${st.risk.tradesToday} of ${st.limits.maxTrades}`),
@@ -243,8 +265,30 @@ const store: Store = {
   equity: (n) => prisma.equitySnapshot.findMany({ orderBy: { id: 'desc' }, take: n }).then((r) => r.reverse()),
 };
 
+const paperShorts = {} as Record<ShortPair, PaperShorts>;
+const timedFetch: typeof fetch = (input, init) => fetch(input, { ...init, signal: AbortSignal.timeout(10_000) });
+const shortExchange = new NobitexAdapter({ baseUrl: cfg.NOBITEX_BASE_URL, apiKey: '', apiSecret: '', feePct: cfg.FEE_PCT, fetch: timedFetch });
+for (const pair of shortPairs) {
+  const key = `paper-shorts:${pair}`;
+  const saved = await prisma.state.findUnique({ where: { key } });
+  paperShorts[pair] = new PaperShorts(saved ? JSON.parse(saved.value) : newPaperShortState(), async () => {
+    const feed = { baseUrl: cfg.NOBITEX_BASE_URL, fetch: timedFetch };
+    const market = await shortExchange.getMarket(pair);
+    const [bars, hourly] = await Promise.allSettled([
+      fetchRecent(pair, '15', 300, feed),
+      fetchRecent(pair, '60', 300, feed),
+    ]);
+    const quote = await shortExchange.getQuote(pair);
+    const candleError = bars.status === 'rejected' || hourly.status === 'rejected' ? 'Candle feed unavailable. Entry checks skipped.' : undefined;
+    return { ...quote, bars: bars.status === 'fulfilled' ? bars.value : [], hourly: hourly.status === 'fulfilled' ? hourly.value : [], market, candleError };
+  }, (state) => {
+    const value = JSON.stringify(state);
+    return prisma.state.upsert({ where: { key }, create: { key, value }, update: { value } });
+  }, cfg.FEE_PCT / 100, cfg.SLIPPAGE_PCT / 100);
+}
+
 const app = await buildServer({
-  cfg, bot, store,
+  cfg, bot, store, paperShorts,
   staticDir: existsSync(webDist) ? webDist : undefined,
   candles: candlesCached, strategyView, assets, scan: scanApi, watchlist,
   backtest: async (r) => {
@@ -276,5 +320,5 @@ await app.listen({ host: cfg.HOST, port: cfg.PORT });
 console.log(`dashboard API on http://${cfg.HOST}:${cfg.PORT} — mode: ${cfg.TRADING_MODE.toUpperCase()} — bot is STOPPED until you press Start`);
 if (cfg.TRADING_MODE === 'live') console.warn('LIVE MODE. Cannot verify API-key permissions automatically: make sure the Nobitex key has READ+TRADE only (no WITHDRAW) and an IP whitelist.');
 
-const shutdown = async () => { bot.stop(); await bot.drain(); persist(); await writes; await app.close(); await prisma.$disconnect(); process.exit(0); };
+const shutdown = async () => { bot.stop(); await Promise.all([bot.drain(), ...Object.values(paperShorts).map((runner) => runner.stop())]); persist(); await writes; await app.close(); await prisma.$disconnect(); process.exit(0); };
 process.on('SIGINT', shutdown); process.on('SIGTERM', shutdown);

@@ -4,6 +4,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { newPaperShortState, PaperShorts } from '../execution/PaperShorts.js';
 import { buildServer, type Deps } from './server.js';
 
 const hash = bcrypt.hashSync('correct horse battery', 4);
@@ -65,6 +66,25 @@ describe('auth', () => {
     const out = await app.inject({ method: 'POST', url: '/api/logout', headers: { cookie } });
     expect(out.headers['set-cookie']).toMatch(/token=;/);
   });
+});
+
+it('requires admin login and a supported pair to control paper shorts', async () => {
+  const runner = () => new PaperShorts(newPaperShortState(), async () => { throw new Error('test feed'); }, async () => {}, 0.0013, 0.0005);
+  const short = runner();
+  const app = await buildServer({ ...deps(), paperShorts: { 'BTC/USDT': short, 'ZEC/USDT': runner() } });
+  const url = '/api/paper-shorts/start';
+  const payload = { pair: 'BTC/USDT' };
+  try {
+    expect((await app.inject({ method: 'POST', url, payload })).statusCode).toBe(401);
+    const headers = { cookie: (await login(app)).cookie };
+    expect((await app.inject({ method: 'POST', url, headers, payload: { pair: 'ETH/USDT' } })).statusCode).toBe(400);
+    expect((await app.inject({ method: 'POST', url, headers, payload })).json().running).toBe(true);
+    expect((await app.inject({ method: 'GET', url: '/api/paper-shorts?pair=ZEC%2FUSDT', headers })).json().running).toBe(false);
+    expect((await app.inject({ method: 'POST', url: '/api/paper-shorts/stop', headers, payload })).json().running).toBe(false);
+  } finally {
+    await short.stop();
+    await app.close();
+  }
 });
 
 describe('routes (authenticated)', () => {

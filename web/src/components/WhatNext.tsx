@@ -3,7 +3,7 @@ import { Card } from './ui';
 
 interface Cond { label: string; ok: boolean; detail: string }
 export interface View {
-  ready: boolean; summary: string; mode?: 'flat' | 'in_position'; price?: number; symbol?: string;
+  ready: boolean; summary: string; running?: boolean; mode?: 'flat' | 'in_position'; price?: number; symbol?: string;
   entry?: Cond[]; exit?: Cond[]; gates?: Cond[]; plan?: { entry: number; stop: number; target: number } | null;
   facts?: string[]; strategy?: string; timeframe?: string;
   lastCandleClose?: number | null; nextCandleClose?: number | null;
@@ -19,13 +19,17 @@ const time = (ms?: number | null) => (ms ? new Date(ms).toLocaleTimeString([], {
 
 /** Plain-language answer to "what is the bot waiting for?" */
 export default function WhatNext({ v, err }: { v?: View; err?: string }) {
-  if (err) return <Card title="Why isn't it buying?"><div className="text-sm text-red-400">{err}</div></Card>;
-  if (!v) return <Card title="Why isn't it buying?"><div className="text-sm text-zinc-500">Loading…</div></Card>;
+  if (err) return <Card title="When will it open a long?"><div className="text-sm text-red-400">{err}</div></Card>;
+  if (!v) return <Card title="When will it open a long?"><div className="text-sm text-zinc-500">Loading…</div></Card>;
   const holding = v.mode === 'in_position';
+  const gate = v.gates?.find((check) => !check.ok);
+  const entry = v.entry?.find((check) => !check.ok);
 
   return (
-    <Card title={`Details for ${v.symbol ?? 'the active coin'}: what the bot is waiting for`}>
-      <p className="mb-3 text-base text-zinc-100">{v.summary}</p>
+    <Card title={`When will it open a long? · ${v.symbol ?? 'Active market'}`}>
+      <p className="mb-1 text-sm text-zinc-400">A long buys first and can profit if it sells later at a higher price. See Paper Shorts for the sell-first simulation.</p>
+      <p className="mb-2 text-base font-semibold">{holding ? 'Long position open' : v.running === false ? 'Long bot stopped' : gate ? gate.detail : entry ? 'Waiting for a buy setup' : 'Checking for a buy'}</p>
+      <p className="mb-3 text-sm text-zinc-200">{v.summary}</p>
       {v.ready && (
         <div className="grid gap-4 lg:grid-cols-3">
           <div>

@@ -64,6 +64,11 @@ export class NobitexAdapter implements ExchangeAdapter {
     return j;
   }
 
+  async getQuote(symbol: string) {
+    const book = await this.req('GET', `/v3/orderbook/${nobitexSymbol(symbol).id}`);
+    return { bid: Number(book.bids?.[0]?.[0]), ask: Number(book.asks?.[0]?.[0]), quoteTime: Number(book.lastUpdate) };
+  }
+
   async getTicker(symbol: string): Promise<Ticker> {
     const j = await this.req('GET', `/v3/orderbook/${nobitexSymbol(symbol).id}`);
     const price = Number(j.lastTradePrice);

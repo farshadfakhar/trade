@@ -50,6 +50,12 @@ docker compose --profile https up -d          # + Caddy with automatic HTTPS (se
 ```
 Keep the dashboard behind HTTPS if it is reachable from anywhere but your own machine. (Docker files are untested: Docker was not available where they were written.)
 
+## Paper Shorts
+
+Sign into the dashboard, open **Paper Shorts**, choose BTC/USDT or ZEC/USDT, and press **Start shorts**. Each market has separate baseline and cost-filtered portfolios starting at 10 simulated USDT each. The filtered portfolio skips entries when estimated round-trip costs exceed one-third of the gross target.
+
+The dashboard shows quotes, open positions, fees, recent closes, and realized P&L. Positions and results persist in SQLite. After a server restart, press **Start shorts** to resume. Pausing suspends entry and exit checks. The runner uses public quotes and simulated fills and is independent of spot trading. Margin-specific charges and liquidation are outside the simulation.
+
 ## Paper trading (the step before any real money)
 1. Set `STRATEGY=pullback15m` (or any other) and `TRADING_MODE=paper` in `.env`, restart, press Start. Paper mode uses live Nobitex prices, the same fees (`FEE_PCT`) and slippage as the backtest, and the same risk rules.
 2. **Keep it running.** The 15m strategy only sees a candle if the bot is up when it closes. A sleeping laptop means missed candles; run it on an always-on machine (`docker compose up -d`).

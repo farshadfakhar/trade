@@ -5,11 +5,12 @@ import Assets from './pages/Assets';
 import Backtest from './pages/Backtest';
 import Logs from './pages/Logs';
 import Overview from './pages/Overview';
+import PaperShorts from './pages/PaperShorts';
 import Scanner from './pages/Scanner';
 import Settings from './pages/Settings';
 import Trades from './pages/Trades';
 
-const tabs = { Overview, Scanner, Assets, Trades, Backtest, Logs, Settings } as const;
+const tabs = { Overview, Scanner, Assets, Trades, 'Paper Shorts': PaperShorts, Backtest, Logs, Settings } as const;
 type Tab = keyof typeof tabs;
 
 function Login({ onOk }: { onOk: () => void }) {

@@ -7,6 +7,7 @@ import Fastify from 'fastify';
 import { z } from 'zod';
 import type { Report } from '../backtest/backtest.js';
 import { settingsSchema, type Config, type Settings } from '../config/index.js';
+import { shortPairs, type PaperShorts, type ShortPair } from '../execution/PaperShorts.js';
 import type { Bot } from '../execution/Bot.js';
 import type { Candle } from '../strategy/types.js';
 
@@ -19,6 +20,7 @@ export interface BacktestReq { symbol: string; resolution?: string; from: number
 export interface Deps {
   cfg: Pick<Config, 'DASHBOARD_PASSWORD_HASH' | 'JWT_SECRET' | 'COOKIE_SECURE'> & { TRUST_PROXY?: boolean };
   bot: Bot; store: Store; staticDir?: string;
+  paperShorts?: Record<ShortPair, PaperShorts>;
   candles(symbol: string, resolution: string): Promise<Candle[]>;
   backtest(r: BacktestReq): Promise<Report>;
   strategyView(): Promise<unknown>;
@@ -85,6 +87,14 @@ export async function buildServer(d: Deps) {
   });
   app.post('/api/logout', async (_r, reply) => { reply.clearCookie('token', { path: '/' }); return { ok: true }; });
   app.get('/api/me', async () => ({ ok: true }));
+
+  const shortPair = z.object({ pair: z.enum(shortPairs) });
+  if (d.paperShorts) {
+    const shorts = d.paperShorts;
+    app.get('/api/paper-shorts', async (req) => shorts[shortPair.parse(req.query).pair].status());
+    app.post('/api/paper-shorts/start', async (req) => shorts[shortPair.parse(req.body).pair].start());
+    app.post('/api/paper-shorts/stop', async (req) => shorts[shortPair.parse(req.body).pair].stop());
+  }
 
   app.get('/api/status', async () => d.bot.status());
 
